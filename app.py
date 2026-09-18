@@ -195,7 +195,7 @@ def parse_single_expert(chunk_str, current_scope=""):
     if avail_lines:
         avail_text = "\n".join(avail_lines)
     else:
-        avail_text = "回収中"
+        avail_text = "本日ご希望の場合は相談可"
         
     return {
         "scope": current_scope,
