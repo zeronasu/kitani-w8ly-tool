@@ -94,7 +94,7 @@ st.markdown("""
         font-weight: 800 !important;
     }
 
-    /* メールコピー表示領域のフォント＆スタイル */
+    /* メールコピー表示エリアのフォント＆スタイル */
     .email-preview-box {
         background-color: #FFFFFF !important;
         color: #111111 !important;
@@ -114,6 +114,17 @@ st.markdown("""
         padding: 0 2px;
         border-radius: 2px;
     }
+
+    /* アングル名タイトル（青文字＋下線） */
+    .angle-category-title {
+        color: #2B78A0 !important;
+        font-weight: bold !important;
+        font-size: 14.5px !important;
+        border-bottom: 1.5px solid #2B78A0 !important;
+        padding-bottom: 3px !important;
+        margin: 20px 0 12px 0 !important;
+        display: block !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -121,101 +132,134 @@ st.markdown("""
 <div class="main-card">
     <span class="badge-theme">W8LY SPECIAL TOOL</span>
     <h1 class="main-title">木谷さんW8LY専用エキスパート整理ツール</h1>
-    <p class="sub-desc">メール本文をコピペするだけで、名前・企業名・Q&A回答部分のハイライト付きメール文面とエクセルファイルを自動生成します。</p>
+    <p class="sub-desc">メール本文をコピペするだけで、アングルタイトル・名前・企業名・Q&A回答の自動装飾メール文面とエクセルを同時に生成します。</p>
 </div>
 """, unsafe_allow_html=True)
 
 input_text = st.text_area("▼ 送信されてきたメール文面をここに貼り付けてください", height=260, placeholder="Hi Yui, ... から始まるメールテキストをそのままペースト")
 
-def parse_email_text(raw_text):
-    # 余計な署名・免責事項・オフィス一覧等のフッター情報をカット
+def parse_single_expert(chunk_str, current_scope=""):
+    if not chunk_str or not re.search(r'#\d+(?:\.\d+)?', chunk_str):
+        return None
+        
+    header_match = re.search(r'#(\d+(?:\.\d+)?)\s*-\s*([^-]+?)\s*-\s*(.+?)(?=\n|$)', chunk_str)
+    if not header_match:
+        return None
+        
+    number = header_match.group(1).strip()
+    name = header_match.group(2).strip()
+    title = header_match.group(3).strip()
+    
+    lines = chunk_str.split('\n')
+    summary_lines = []
+    screened_lines = []
+    avail_lines = []
+    
+    in_screened = False
+    in_emp = False
+    in_avail = False
+    
+    for line in lines[1:]:
+        l = line.strip()
+        if not l:
+            continue
+            
+        if re.match(r'\[\s*(?:Screened|Re-screened).*?\]', l, re.IGNORECASE) or re.match(r'Screened\s+\d', l, re.IGNORECASE):
+            in_screened = True
+            in_emp = False
+            in_avail = False
+            screened_lines.append(l)
+            continue
+        elif "Employment History:" in l:
+            in_screened = False
+            in_emp = True
+            in_avail = False
+            continue
+        elif "Availability:" in l:
+            in_screened = False
+            in_emp = False
+            in_avail = True
+            continue
+        elif any(k in l for k in ["This specialist has not yet provided any availability", "Request Availability", "Book Now", "This specialist is based in", "Hourly Fee:"]):
+            continue
+            
+        if in_screened:
+            screened_lines.append(l)
+        elif in_avail:
+            if "Time Zone:" in l:
+                continue
+            avail_lines.append(l)
+        elif not in_emp and not in_screened and not in_avail:
+            summary_lines.append(l)
+            
+    summary_text = "\n".join(summary_lines)
+    qa_text = "\n".join(screened_lines)
+    
+    if avail_lines:
+        avail_text = "\n".join(avail_lines)
+    else:
+        avail_text = "回収中"
+        
+    return {
+        "scope": current_scope,
+        "number": number,
+        "name": name,
+        "title": title,
+        "summary": summary_text,
+        "qa": qa_text,
+        "availability": avail_text
+    }
+
+def parse_full_email(raw_text):
     clean_raw = raw_text
     footer_keywords = ["Natsuko Shiga", "Research - Japan", "Disclaimer:", "Important:", "Compliance Reminder", "Third Bridge (Hong Kong)"]
     for kw in footer_keywords:
         if kw in clean_raw:
             clean_raw = clean_raw.split(kw)[0]
             
-    pattern = r'(?=(?:^|\n)#\d+(?:\.\d+)?\s*-)'
-    chunks = re.split(pattern, clean_raw)
+    lines = clean_raw.split('\n')
     
+    structured_items = [] # list of {"type": "category", "text": ...} or {"type": "expert", "data": ...}
     parsed_experts = []
     
-    for chunk in chunks:
-        chunk_str = chunk.strip()
-        if not chunk_str or not re.search(r'#\d+(?:\.\d+)?', chunk_str):
-            continue
-            
-        header_match = re.search(r'#(\d+(?:\.\d+)?)\s*-\s*([^-]+?)\s*-\s*(.+?)(?=\n|$)', chunk_str)
-        if not header_match:
-            continue
-            
-        number = header_match.group(1).strip()
-        name = header_match.group(2).strip()
-        title = header_match.group(3).strip()
+    current_category = ""
+    current_expert_chunk = []
+    
+    for line in lines:
+        l_str = line.strip()
         
-        lines = chunk_str.split('\n')
-        summary_lines = []
-        screened_lines = []
-        avail_lines = []
-        
-        in_screened = False
-        in_emp = False
-        in_avail = False
-        
-        for line in lines[1:]:
-            l = line.strip()
-            if not l:
-                continue
+        # アングル名タイトル判定 (例: [0916] Sanofi: や [0916] RBQM/Real time monitoring 海外:)
+        if re.match(r'\[\d{4}\].+', l_str):
+            if current_expert_chunk:
+                exp_data = parse_single_expert("\n".join(current_expert_chunk), current_category)
+                if exp_data:
+                    structured_items.append({"type": "expert", "data": exp_data})
+                    parsed_experts.append(exp_data)
+                current_expert_chunk = []
                 
-            if re.match(r'\[\s*(?:Screened|Re-screened).*?\]', l, re.IGNORECASE) or re.match(r'Screened\s+\d', l, re.IGNORECASE):
-                in_screened = True
-                in_emp = False
-                in_avail = False
-                screened_lines.append(l)
-                continue
-            elif "Employment History:" in l:
-                in_screened = False
-                in_emp = True
-                in_avail = False
-                continue
-            elif "Availability:" in l:
-                in_screened = False
-                in_emp = False
-                in_avail = True
-                continue
-            elif any(k in l for k in ["This specialist has not yet provided any availability", "Request Availability", "Book Now", "This specialist is based in", "Hourly Fee:"]):
-                continue
-                
-            if in_screened:
-                screened_lines.append(l)
-            elif in_avail:
-                if "Time Zone:" in l:
-                    continue
-                avail_lines.append(l)
-            elif not in_emp and not in_screened and not in_avail:
-                summary_lines.append(l)
-                
-        summary_text = "\n".join(summary_lines)
-        qa_text = "\n".join(screened_lines)
-        
-        if avail_lines:
-            avail_text = "\n".join(avail_lines)
+            current_category = l_str
+            structured_items.append({"type": "category", "text": l_str})
+        elif re.match(r'#\d+(?:\.\d+)?\s*-', l_str):
+            if current_expert_chunk:
+                exp_data = parse_single_expert("\n".join(current_expert_chunk), current_category)
+                if exp_data:
+                    structured_items.append({"type": "expert", "data": exp_data})
+                    parsed_experts.append(exp_data)
+                current_expert_chunk = []
+            current_expert_chunk.append(line)
         else:
-            avail_text = "回収中"
+            if current_expert_chunk:
+                current_expert_chunk.append(line)
+                
+    if current_expert_chunk:
+        exp_data = parse_single_expert("\n".join(current_expert_chunk), current_category)
+        if exp_data:
+            structured_items.append({"type": "expert", "data": exp_data})
+            parsed_experts.append(exp_data)
             
-        parsed_experts.append({
-            "number": number,
-            "name": name,
-            "title": title,
-            "summary": summary_text,
-            "qa": qa_text,
-            "availability": avail_text
-        })
-        
-    return parsed_experts
+    return structured_items, parsed_experts
 
 def highlight_title_company(title):
-    # at と 日付 (MM/YYYY - MM/YYYY) または [Verified] の間の企業名をハイライト
     match = re.search(r'(\bat\s+)(.+?)(\s*\(\d{2}/\d{4}|\s*\[|\s*$)', title, re.IGNORECASE)
     if match:
         before_at = title[:match.start(2)]
@@ -224,45 +268,48 @@ def highlight_title_company(title):
         return f'{before_at}<mark class="yellow-hl">{company}</mark>{after_company}'
     return title
 
-def generate_formatted_email_html(experts):
-    html_blocks = []
-    for exp in experts:
-        highlighted_name = f'<mark class="yellow-hl">{exp["name"]}</mark>'
-        highlighted_title = highlight_title_company(exp["title"])
-        
-        header_line = f'<span style="color: #0055AA; font-weight: bold;">#{exp["number"]}</span> - <strong>{highlighted_name}</strong> - <strong>{highlighted_title}</strong>'
-        
-        block = f'<div>{header_line}</div>'
-        
-        if exp['summary']:
-            summary_formatted = exp['summary'].replace('\n', '<br>')
-            block += f'<div style="margin-top: 10px;">{summary_formatted}</div>'
+def generate_formatted_email_html(structured_items):
+    html_parts = []
+    for item in structured_items:
+        if item["type"] == "category":
+            html_parts.append(f'<div class="angle-category-title">{item["text"]}</div>')
+        elif item["type"] == "expert":
+            exp = item["data"]
+            highlighted_name = f'<mark class="yellow-hl">{exp["name"]}</mark>'
+            highlighted_title = highlight_title_company(exp["title"])
             
-        if exp['qa']:
-            qa_formatted_lines = []
-            for line in exp['qa'].split('\n'):
-                line_str = line.strip()
-                if line_str.startswith('A:') or line_str.startswith('A：'):
-                    qa_formatted_lines.append(f'<mark class="yellow-hl">{line_str}</mark>')
-                else:
-                    qa_formatted_lines.append(line_str)
-            qa_html = "<br>".join(qa_formatted_lines)
-            block += f'<div style="margin-top: 10px;">{qa_html}</div>'
+            header_line = f'<span style="color: #2B78A0; font-weight: bold;">#{exp["number"]}</span> - <strong>{highlighted_name}</strong> - <strong>{highlighted_title}</strong>'
             
-        avail_formatted = exp['availability'].replace('\n', '<br>')
-        block += f'<div style="margin-top: 12px;"><strong>Availability:</strong><br>{avail_formatted}</div>'
-        
-        html_blocks.append(block)
-        
-    return '<br><hr style="border: none; border-top: 1px dashed #CCCCCC; margin: 20px 0;"><br>'.join(html_blocks)
+            block = f'<div style="margin-bottom: 15px;">{header_line}</div>'
+            
+            if exp['summary']:
+                summary_formatted = exp['summary'].replace('\n', '<br>')
+                block += f'<div style="margin-top: 8px;">{summary_formatted}</div>'
+                
+            if exp['qa']:
+                qa_formatted_lines = []
+                for line in exp['qa'].split('\n'):
+                    line_str = line.strip()
+                    if line_str.startswith('A:') or line_str.startswith('A：'):
+                        qa_formatted_lines.append(f'<mark class="yellow-hl">{line_str}</mark>')
+                    else:
+                        qa_formatted_lines.append(line_str)
+                qa_html = "<br>".join(qa_formatted_lines)
+                block += f'<div style="margin-top: 8px;">{qa_html}</div>'
+                
+            avail_formatted = exp['availability'].replace('\n', '<br>')
+            block += f'<div style="margin-top: 10px; margin-bottom: 20px;"><strong>Availability:</strong><br>{avail_formatted}</div>'
+            
+            html_parts.append(block)
+            
+    return "".join(html_parts)
 
 def generate_excel_bytes(experts):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "全員一覧"
     
-    # Employment History は完全除外
-    headers = ["Number", "Name", "Relevant Titles", "Relevant experience", "Availability"]
+    headers = ["Scope", "Number", "Name", "Relevant Titles", "Relevant experience", "Availability"]
     
     font_bold = Font(name="Meiryo UI", size=9, bold=True)
     font_regular = Font(name="Meiryo UI", size=9)
@@ -290,6 +337,7 @@ def generate_excel_bytes(experts):
             exp_full_text += f"\n\n{exp['qa']}"
             
         row_vals = [
+            exp['scope'],
             exp['number'],
             exp['name'],
             exp['title'],
@@ -303,7 +351,7 @@ def generate_excel_bytes(experts):
             cell.border = thin_border
             cell.alignment = Alignment(vertical="top", wrap_text=True)
             
-            if c_idx == 1:
+            if c_idx == 2:
                 try:
                     cell.value = float(val) if "." in str(val) else int(val)
                     cell.number_format = '0.0'
@@ -311,7 +359,7 @@ def generate_excel_bytes(experts):
                     pass
                 cell.alignment = Alignment(horizontal="center", vertical="top")
                 
-    col_widths = [10, 18, 38, 60, 30]
+    col_widths = [18, 10, 18, 38, 60, 30]
     for c_i, w in enumerate(col_widths, 1):
         ws.column_dimensions[get_column_letter(c_i)].width = w
         
@@ -320,13 +368,13 @@ def generate_excel_bytes(experts):
     return output.getvalue()
 
 if input_text:
-    parsed_experts = parse_email_text(input_text)
+    structured_items, parsed_experts = parse_full_email(input_text)
     
     if parsed_experts:
-        st.success(f"✨ {len(parsed_experts)}名のエキスパート情報を正常に整列・ハイライトしました！")
+        st.success(f"✨ {len(parsed_experts)}名のエキスパート情報を正常に整理しました！")
         
-        st.markdown("### 📧 メール送信用整形テキスト（範囲選択してそのままコピーしてください）")
-        email_html = generate_formatted_email_html(parsed_experts)
+        st.markdown("### 📧 メール送信用整形テキスト（ドラッグ選択してそのままコピーしてください）")
+        email_html = generate_formatted_email_html(structured_items)
         st.markdown(f'<div class="email-preview-box">{email_html}</div>', unsafe_allow_html=True)
         
         st.markdown("<br>", unsafe_allow_html=True)
