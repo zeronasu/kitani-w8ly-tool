@@ -17,6 +17,12 @@ st.markdown("""
         background-color: #355E3B !important;
         background-image: none !important;
     }
+
+    /* 周囲の不要なUIテキストが Command+A で選択されないように保護 */
+    .stApp, .main-card, div[data-testid="stHeader"], div[data-testid="stToolbar"] {
+        user-select: none !important;
+        -webkit-user-select: none !important;
+    }
     
     .main-card {
         background-color: #F5EFD6 !important;
@@ -86,7 +92,9 @@ st.markdown("""
         color: #222222 !important;
         border: 2px solid #895129 !important;
         border-radius: 16px !important;
-        font-size: 13.5px !important;
+        font-size: 13px !important;
+        user-select: text !important;
+        -webkit-user-select: text !important;
     }
     
     div[data-testid="stTextArea"] label {
@@ -94,7 +102,7 @@ st.markdown("""
         font-weight: 800 !important;
     }
 
-    /* メールコピー表示領域のフォント＆スタイル */
+    /* メールコピー表示領域（文字サイズ 12.5px に1段階縮小＆完全選択可能） */
     .email-preview-box {
         background-color: #FFFFFF !important;
         color: #111111 !important;
@@ -102,8 +110,8 @@ st.markdown("""
         border-radius: 16px;
         padding: 25px;
         font-family: Arial, Helvetica, 'Segoe UI', sans-serif !important;
-        font-size: 13.5px !important;
-        line-height: 1.6 !important;
+        font-size: 12.5px !important;
+        line-height: 1.55 !important;
         user-select: text !important;
         -webkit-user-select: text !important;
     }
@@ -125,7 +133,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-input_text = st.text_area("▼ 送信されてきたメール文面をここに貼り付けてください", height=260, placeholder="Hi Yui, ... から始まるメールテキストをそのままペースト")
+input_text = st.text_area("▼ 送信されてきたメール文面をここに貼り付けてください", height=240, placeholder="Hi Yui, ... から始まるメールテキストをそのままペースト")
 
 def parse_single_expert(chunk_str, current_scope=""):
     if not chunk_str or not re.search(r'#\d+(?:\.\d+)?', chunk_str):
@@ -215,7 +223,6 @@ def parse_full_email(raw_text):
     for line in lines:
         l_str = line.strip()
         
-        # アングル名タイトルを検出した場合はExcel用Scopeの保持のみ行い、メール文面用には表示しない
         if re.match(r'\[\d{4}\].+', l_str):
             if current_expert_chunk:
                 exp_data = parse_single_expert("\n".join(current_expert_chunk), current_category)
@@ -351,7 +358,7 @@ if input_text:
     if parsed_experts:
         st.success(f"✨ {len(parsed_experts)}名のエキスパート情報を正常に整理しました！")
         
-        st.markdown("### 📧 メール送信用整形テキスト（範囲選択してそのままコピーしてください）")
+        st.markdown("### 📧 メール送信用整形テキスト（クリックして Command+A ➔ Command+C でそのままコピー可能）")
         email_html = generate_formatted_email_html(parsed_experts)
         st.markdown(f'<div class="email-preview-box">{email_html}</div>', unsafe_allow_html=True)
         
