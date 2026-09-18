@@ -8,7 +8,7 @@ import streamlit as st
 
 st.set_page_config(page_title="木谷さんW8LY専用エキスパート整理ツール", page_icon="📋", layout="wide")
 
-# 指定のカラーコード（背景: #355E3B, ボックス: #F5EFD6, 文字: #895129）を適用したCSS
+# 指定カラーテーマ（背景: #355E3B, ボックス: #F5EFD6, 文字: #895129）とスタイル設定
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@700;900&display=swap');
@@ -26,7 +26,7 @@ st.markdown("""
         box-shadow: 0 15px 35px rgba(0, 0, 0, 0.25);
         color: #895129 !important;
         text-align: center;
-        max-width: 700px;
+        max-width: 750px;
         margin: 10px auto 25px auto;
     }
 
@@ -93,6 +93,27 @@ st.markdown("""
         color: #F5EFD6 !important;
         font-weight: 800 !important;
     }
+
+    /* メールコピー表示領域のフォント＆スタイル */
+    .email-preview-box {
+        background-color: #FFFFFF !important;
+        color: #111111 !important;
+        border: 2px solid #895129 !important;
+        border-radius: 16px;
+        padding: 25px;
+        font-family: Arial, Helvetica, 'Segoe UI', sans-serif !important;
+        font-size: 13.5px !important;
+        line-height: 1.6 !important;
+        user-select: text !important;
+        -webkit-user-select: text !important;
+    }
+
+    mark.yellow-hl {
+        background-color: #FFF2CC !important;
+        color: #111111 !important;
+        padding: 0 2px;
+        border-radius: 2px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -100,15 +121,22 @@ st.markdown("""
 <div class="main-card">
     <span class="badge-theme">W8LY SPECIAL TOOL</span>
     <h1 class="main-title">木谷さんW8LY専用エキスパート整理ツール</h1>
-    <p class="sub-desc">メール本文をそのままコピペして貼り付けるだけで、メール送信用テキスト整形とエクセルデータの作成を同時に行います。</p>
+    <p class="sub-desc">メール本文をコピペするだけで、名前・企業名・Q&A回答部分のハイライト付きメール文面とエクセルファイルを自動生成します。</p>
 </div>
 """, unsafe_allow_html=True)
 
-input_text = st.text_area("▼ 送信されてきたメール文面をここに貼り付けてください", height=280, placeholder="Hi Yui, ... から始まるメールテキストをそのままペースト")
+input_text = st.text_area("▼ 送信されてきたメール文面をここに貼り付けてください", height=260, placeholder="Hi Yui, ... から始まるメールテキストをそのままペースト")
 
 def parse_email_text(raw_text):
+    # 余計な署名・免責事項・オフィス一覧等のフッター情報をカット
+    clean_raw = raw_text
+    footer_keywords = ["Natsuko Shiga", "Research - Japan", "Disclaimer:", "Important:", "Compliance Reminder", "Third Bridge (Hong Kong)"]
+    for kw in footer_keywords:
+        if kw in clean_raw:
+            clean_raw = clean_raw.split(kw)[0]
+            
     pattern = r'(?=(?:^|\n)#\d+(?:\.\d+)?\s*-)'
-    chunks = re.split(pattern, raw_text)
+    chunks = re.split(pattern, clean_raw)
     
     parsed_experts = []
     
@@ -128,7 +156,6 @@ def parse_email_text(raw_text):
         lines = chunk_str.split('\n')
         summary_lines = []
         screened_lines = []
-        emp_lines = []
         avail_lines = []
         
         in_screened = False
@@ -157,26 +184,19 @@ def parse_email_text(raw_text):
                 in_avail = True
                 continue
             elif any(k in l for k in ["This specialist has not yet provided any availability", "Request Availability", "Book Now", "This specialist is based in", "Hourly Fee:"]):
-                if in_avail and "Time Zone:" not in l:
-                    pass
                 continue
-            elif any(k in l for k in ["Disclaimer:", "Important:", "Compliance Reminder", "Third Bridge"]):
-                break
                 
             if in_screened:
                 screened_lines.append(l)
-            elif in_emp:
-                emp_lines.append(l)
             elif in_avail:
                 if "Time Zone:" in l:
                     continue
                 avail_lines.append(l)
-            else:
+            elif not in_emp and not in_screened and not in_avail:
                 summary_lines.append(l)
                 
         summary_text = "\n".join(summary_lines)
         qa_text = "\n".join(screened_lines)
-        emp_text = "\n".join(emp_lines)
         
         if avail_lines:
             avail_text = "\n".join(avail_lines)
@@ -189,33 +209,60 @@ def parse_email_text(raw_text):
             "title": title,
             "summary": summary_text,
             "qa": qa_text,
-            "emp": emp_text,
             "availability": avail_text
         })
         
     return parsed_experts
 
-def generate_formatted_email_text(experts):
-    output_blocks = []
+def highlight_title_company(title):
+    # at と 日付 (MM/YYYY - MM/YYYY) または [Verified] の間の企業名をハイライト
+    match = re.search(r'(\bat\s+)(.+?)(\s*\(\d{2}/\d{4}|\s*\[|\s*$)', title, re.IGNORECASE)
+    if match:
+        before_at = title[:match.start(2)]
+        company = match.group(2)
+        after_company = title[match.end(2):]
+        return f'{before_at}<mark class="yellow-hl">{company}</mark>{after_company}'
+    return title
+
+def generate_formatted_email_html(experts):
+    html_blocks = []
     for exp in experts:
-        block = f"#{exp['number']} - {exp['name']} - {exp['title']}\n"
+        highlighted_name = f'<mark class="yellow-hl">{exp["name"]}</mark>'
+        highlighted_title = highlight_title_company(exp["title"])
+        
+        header_line = f'<span style="color: #0055AA; font-weight: bold;">#{exp["number"]}</span> - <strong>{highlighted_name}</strong> - <strong>{highlighted_title}</strong>'
+        
+        block = f'<div>{header_line}</div>'
+        
         if exp['summary']:
-            block += f"\n{exp['summary']}\n"
+            summary_formatted = exp['summary'].replace('\n', '<br>')
+            block += f'<div style="margin-top: 10px;">{summary_formatted}</div>'
+            
         if exp['qa']:
-            block += f"\n{exp['qa']}\n"
+            qa_formatted_lines = []
+            for line in exp['qa'].split('\n'):
+                line_str = line.strip()
+                if line_str.startswith('A:') or line_str.startswith('A：'):
+                    qa_formatted_lines.append(f'<mark class="yellow-hl">{line_str}</mark>')
+                else:
+                    qa_formatted_lines.append(line_str)
+            qa_html = "<br>".join(qa_formatted_lines)
+            block += f'<div style="margin-top: 10px;">{qa_html}</div>'
+            
+        avail_formatted = exp['availability'].replace('\n', '<br>')
+        block += f'<div style="margin-top: 12px;"><strong>Availability:</strong><br>{avail_formatted}</div>'
         
-        block += f"\nAvailability:\n{exp['availability']}\n"
-        block += "-" * 50
-        output_blocks.append(block)
+        html_blocks.append(block)
         
-    return "\n\n".join(output_blocks)
+    return '<br><hr style="border: none; border-top: 1px dashed #CCCCCC; margin: 20px 0;"><br>'.join(html_blocks)
 
 def generate_excel_bytes(experts):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "全員一覧"
     
-    headers = ["Number", "Name", "Relevant Titles", "Relevant experience", "Employment History", "Availability"]
+    # Employment History は完全除外
+    headers = ["Number", "Name", "Relevant Titles", "Relevant experience", "Availability"]
     
     font_bold = Font(name="Meiryo UI", size=9, bold=True)
     font_regular = Font(name="Meiryo UI", size=9)
@@ -247,7 +294,6 @@ def generate_excel_bytes(experts):
             exp['name'],
             exp['title'],
             exp_full_text,
-            exp['emp'],
             exp['availability']
         ]
         
@@ -265,7 +311,7 @@ def generate_excel_bytes(experts):
                     pass
                 cell.alignment = Alignment(horizontal="center", vertical="top")
                 
-    col_widths = [10, 18, 38, 60, 50, 30]
+    col_widths = [10, 18, 38, 60, 30]
     for c_i, w in enumerate(col_widths, 1):
         ws.column_dimensions[get_column_letter(c_i)].width = w
         
@@ -277,12 +323,13 @@ if input_text:
     parsed_experts = parse_email_text(input_text)
     
     if parsed_experts:
-        st.success(f"✨ {len(parsed_experts)}名のエキスパート情報を正常に抽出しました！")
+        st.success(f"✨ {len(parsed_experts)}名のエキスパート情報を正常に整列・ハイライトしました！")
         
-        st.markdown("### 📧 メールコピペ用テキスト")
-        email_formatted_text = generate_formatted_email_text(parsed_experts)
-        st.code(email_formatted_text, language="text")
+        st.markdown("### 📧 メール送信用整形テキスト（範囲選択してそのままコピーしてください）")
+        email_html = generate_formatted_email_html(parsed_experts)
+        st.markdown(f'<div class="email-preview-box">{email_html}</div>', unsafe_allow_html=True)
         
+        st.markdown("<br>", unsafe_allow_html=True)
         excel_data = generate_excel_bytes(parsed_experts)
         st.download_button(
             label="📥 エクセルファイルをダウンロード",
