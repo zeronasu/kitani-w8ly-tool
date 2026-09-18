@@ -94,7 +94,7 @@ st.markdown("""
         font-weight: 800 !important;
     }
 
-    /* メールコピー表示エリアのフォント＆スタイル */
+    /* メールコピー表示領域のフォント＆スタイル */
     .email-preview-box {
         background-color: #FFFFFF !important;
         color: #111111 !important;
@@ -114,17 +114,6 @@ st.markdown("""
         padding: 0 2px;
         border-radius: 2px;
     }
-
-    /* アングル名タイトル（青文字＋下線） */
-    .angle-category-title {
-        color: #2B78A0 !important;
-        font-weight: bold !important;
-        font-size: 14.5px !important;
-        border-bottom: 1.5px solid #2B78A0 !important;
-        padding-bottom: 3px !important;
-        margin: 20px 0 12px 0 !important;
-        display: block !important;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -132,7 +121,7 @@ st.markdown("""
 <div class="main-card">
     <span class="badge-theme">W8LY SPECIAL TOOL</span>
     <h1 class="main-title">木谷さんW8LY専用エキスパート整理ツール</h1>
-    <p class="sub-desc">メール本文をコピペするだけで、アングルタイトル・名前・企業名・Q&A回答の自動装飾メール文面とエクセルを同時に生成します。</p>
+    <p class="sub-desc">メール本文をコピペするだけで、名前・企業名・Q&A回答の自動装飾メール文面とエクセルを同時に生成します。</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -219,31 +208,25 @@ def parse_full_email(raw_text):
             
     lines = clean_raw.split('\n')
     
-    structured_items = [] # list of {"type": "category", "text": ...} or {"type": "expert", "data": ...}
     parsed_experts = []
-    
     current_category = ""
     current_expert_chunk = []
     
     for line in lines:
         l_str = line.strip()
         
-        # アングル名タイトル判定 (例: [0916] Sanofi: や [0916] RBQM/Real time monitoring 海外:)
+        # アングル名タイトルを検出した場合はExcel用Scopeの保持のみ行い、メール文面用には表示しない
         if re.match(r'\[\d{4}\].+', l_str):
             if current_expert_chunk:
                 exp_data = parse_single_expert("\n".join(current_expert_chunk), current_category)
                 if exp_data:
-                    structured_items.append({"type": "expert", "data": exp_data})
                     parsed_experts.append(exp_data)
                 current_expert_chunk = []
-                
             current_category = l_str
-            structured_items.append({"type": "category", "text": l_str})
         elif re.match(r'#\d+(?:\.\d+)?\s*-', l_str):
             if current_expert_chunk:
                 exp_data = parse_single_expert("\n".join(current_expert_chunk), current_category)
                 if exp_data:
-                    structured_items.append({"type": "expert", "data": exp_data})
                     parsed_experts.append(exp_data)
                 current_expert_chunk = []
             current_expert_chunk.append(line)
@@ -254,10 +237,9 @@ def parse_full_email(raw_text):
     if current_expert_chunk:
         exp_data = parse_single_expert("\n".join(current_expert_chunk), current_category)
         if exp_data:
-            structured_items.append({"type": "expert", "data": exp_data})
             parsed_experts.append(exp_data)
             
-    return structured_items, parsed_experts
+    return parsed_experts
 
 def highlight_title_company(title):
     match = re.search(r'(\bat\s+)(.+?)(\s*\(\d{2}/\d{4}|\s*\[|\s*$)', title, re.IGNORECASE)
@@ -268,41 +250,37 @@ def highlight_title_company(title):
         return f'{before_at}<mark class="yellow-hl">{company}</mark>{after_company}'
     return title
 
-def generate_formatted_email_html(structured_items):
+def generate_formatted_email_html(experts):
     html_parts = []
-    for item in structured_items:
-        if item["type"] == "category":
-            html_parts.append(f'<div class="angle-category-title">{item["text"]}</div>')
-        elif item["type"] == "expert":
-            exp = item["data"]
-            highlighted_name = f'<mark class="yellow-hl">{exp["name"]}</mark>'
-            highlighted_title = highlight_title_company(exp["title"])
+    for exp in experts:
+        highlighted_name = f'<mark class="yellow-hl">{exp["name"]}</mark>'
+        highlighted_title = highlight_title_company(exp["title"])
+        
+        header_line = f'<span style="color: #0055AA; font-weight: bold;">#{exp["number"]}</span> - <strong>{highlighted_name}</strong> - <strong>{highlighted_title}</strong>'
+        
+        block = f'<div style="margin-bottom: 12px;">{header_line}</div>'
+        
+        if exp['summary']:
+            summary_formatted = exp['summary'].replace('\n', '<br>')
+            block += f'<div style="margin-top: 8px;">{summary_formatted}</div>'
             
-            header_line = f'<span style="color: #2B78A0; font-weight: bold;">#{exp["number"]}</span> - <strong>{highlighted_name}</strong> - <strong>{highlighted_title}</strong>'
+        if exp['qa']:
+            qa_formatted_lines = []
+            for line in exp['qa'].split('\n'):
+                line_str = line.strip()
+                if line_str.startswith('A:') or line_str.startswith('A：'):
+                    qa_formatted_lines.append(f'<mark class="yellow-hl">{line_str}</mark>')
+                else:
+                    qa_formatted_lines.append(line_str)
+            qa_html = "<br>".join(qa_formatted_lines)
+            block += f'<div style="margin-top: 8px;">{qa_html}</div>'
             
-            block = f'<div style="margin-bottom: 15px;">{header_line}</div>'
-            
-            if exp['summary']:
-                summary_formatted = exp['summary'].replace('\n', '<br>')
-                block += f'<div style="margin-top: 8px;">{summary_formatted}</div>'
-                
-            if exp['qa']:
-                qa_formatted_lines = []
-                for line in exp['qa'].split('\n'):
-                    line_str = line.strip()
-                    if line_str.startswith('A:') or line_str.startswith('A：'):
-                        qa_formatted_lines.append(f'<mark class="yellow-hl">{line_str}</mark>')
-                    else:
-                        qa_formatted_lines.append(line_str)
-                qa_html = "<br>".join(qa_formatted_lines)
-                block += f'<div style="margin-top: 8px;">{qa_html}</div>'
-                
-            avail_formatted = exp['availability'].replace('\n', '<br>')
-            block += f'<div style="margin-top: 10px; margin-bottom: 20px;"><strong>Availability:</strong><br>{avail_formatted}</div>'
-            
-            html_parts.append(block)
-            
-    return "".join(html_parts)
+        avail_formatted = exp['availability'].replace('\n', '<br>')
+        block += f'<div style="margin-top: 10px; margin-bottom: 25px;"><strong>Availability:</strong><br>{avail_formatted}</div>'
+        
+        html_parts.append(block)
+        
+    return "<br><hr style='border: none; border-top: 1px dashed #CCCCCC; margin: 20px 0;'><br>".join(html_parts)
 
 def generate_excel_bytes(experts):
     wb = openpyxl.Workbook()
@@ -368,13 +346,13 @@ def generate_excel_bytes(experts):
     return output.getvalue()
 
 if input_text:
-    structured_items, parsed_experts = parse_full_email(input_text)
+    parsed_experts = parse_full_email(input_text)
     
     if parsed_experts:
         st.success(f"✨ {len(parsed_experts)}名のエキスパート情報を正常に整理しました！")
         
-        st.markdown("### 📧 メール送信用整形テキスト（ドラッグ選択してそのままコピーしてください）")
-        email_html = generate_formatted_email_html(structured_items)
+        st.markdown("### 📧 メール送信用整形テキスト（範囲選択してそのままコピーしてください）")
+        email_html = generate_formatted_email_html(parsed_experts)
         st.markdown(f'<div class="email-preview-box">{email_html}</div>', unsafe_allow_html=True)
         
         st.markdown("<br>", unsafe_allow_html=True)
